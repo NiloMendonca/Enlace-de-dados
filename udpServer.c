@@ -1,11 +1,3 @@
-
-  //Adicionar controle para escolher entre recepcao ou envio
-  //Solicitar reenvio das mensagens
-  //Adicionar escolha para tamanho das mensagens
-/*Fiquei com uma duvida no trabalho e em relacao ao tamanho da PDU da camada de enlace, e que la fala que e pra solicitar pro usuario 
-o tamanho do quadro, so que como serao dois programas rodando no caso os dois teria que informar o mesmo tamanho? Ou a gente pode definir
-o tamanho?*/
-
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -15,19 +7,22 @@ o tamanho?*/
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
+#include <pthread.h>
 
 #define MAX_MSG 100
 #define BODY 10
-#define SIZE_FRAME 10
 #define SIZE_CABECALHO 5
-#define PORTA_CLIENT 4001
-#define PORTA_SERVER 4002
+#define PORTA_CLIENT_S 5002
+#define PORTA_CLIENT_C 5001
 
-void sendMsg(char *mensagem);
-int getEndMsg(int sd, struct sockaddr_in endCli);
-int server(int sd, struct sockaddr_in endCli);
-void sendEndMsg(char *msg);
-void client(int sd, struct sockaddr_in endCli);
+#define PORTA_SERVER_S 5004
+#define PORTA_SERVER_C 5003
+
+void sendMsg(char *mensagem, int portaClient);
+int getEndMsg(int sd);
+void *server();
+void sendEndMsg(char *msg, int portaClient);
+void *client();
 
 typedef struct mensagemCompleta {
   char texto[1000];
@@ -37,144 +32,192 @@ typedef struct mensagemCompleta {
 int cont=0, verificaMensagem=1;
 char ip[16];
 MENSAGEMCOMPLETA mensagemCompleta;
+struct sockaddr_in endCli;   /* Vai conter identificacao do cliente */ 
 
 int main() {
   // Inicializa as variaveis - SERVIDOR
-  char mensagem[MAX_MSG];
-  int sd, rc, confirmMsg = 1, verificaServer = 1;
-  struct sockaddr_in endCli;   /* Vai conter identificacao do cliente */ 
-  struct sockaddr_in endServ;  /* Vai conter identificacao do servidor local */
+  pthread_t threads[2];
 
   // Realiza a leitura do ip do outro servidor/cliente
-  printf("Digite o ip do servidor: ");
-  scanf("%s", ip);
+  // printf("Digite o ip do servidor: ");
+  // scanf("%s", ip);
+  strcpy(ip,"127.0.0.1");
 
   // Verifica se o IP foi digitado
   if(strcmp(ip, "") == 0){
-    printf("\nDados incorretos!!!%s", ip);
-    return 0;
+    printf("\n%s: Dado incorreto!!!", ip);
+    return 1;
   }
+
+  // Entra em loop para envio/recebimento de mensagens
+  // while(1){
+  //   printf("Digite a mensagem (Digite '.' para sair): ");
+  //   scanf("\n");
+  //   fgets(mensagem, MAX_MSG, stdin);
+
+  //   // Realiza o envio da mensagem e aguarda a confirmacao do recebimento
+  //   while(confirmMsg){
+  //     sendMsg(mensagem);
+  //     confirmMsg = getEndMsg(sd, endCli);
+  //   }
+  //   confirmMsg = 1;
+
+  //   if(strcmp(mensagem, ".\n") == 0)
+  //     exit(1);
+  //   else if(strcmp(mensagem, ".1\n") == 0){
+  //     while(verificaServer)
+  //       verificaServer = server(sd, endCli);
+  //     verificaServer = 1;
+  //   }
+  // }
+  pthread_create(&(threads[0]), NULL, client, NULL);
+  pthread_create(&(threads[1]), NULL, server, NULL);
+  pthread_join(threads[0], NULL);
+  pthread_join(threads[1], NULL);
+
+  return 0;
+}
+
+void *client(){
+  int rc, sd;
+  struct sockaddr_in endServ;  /* Vai conter identificacao do servidor local */
 
   // Inicializa o socket
   sd=socket(AF_INET, SOCK_DGRAM, 0);
   if(sd<0) {
     printf("Nao pode abrir o socket \n");
-    exit(1);  
+    exit(1);
   }
 
-  // Configura o Servidor para receber as mensagens do outro cliente
-  endServ.sin_family 	  = AF_INET;
+    // Configura o Servidor para receber as mensagens do outro cliente
+  endServ.sin_family    = AF_INET;
   endServ.sin_addr.s_addr = inet_addr(ip); 
-  endServ.sin_port 	  = htons(PORTA_SERVER);
+  endServ.sin_port    = htons(PORTA_SERVER_C);
 
   rc = bind (sd, (struct sockaddr *) &endServ,sizeof(endServ));
   if(rc<0) {
-    printf("Nao pode fazer bind na porta %d \n", PORTA_SERVER);
-    exit(1); 
+    printf("Nao pode fazer bind na porta %d \n", PORTA_SERVER_C);
+    exit(1);
   }
 
-  printf("Conectado no IP: %s, porta SERVER: %d, porta CLIENT: %d\n", ip, PORTA_SERVER, PORTA_CLIENT);
+  printf("Conectado no IP: %s, porta SERVER: %d, porta CLIENT: %d\n", ip, PORTA_SERVER_C, PORTA_CLIENT_C);
+
+    char mensagem[MAX_MSG];
+    int verificaServer = 1, confirmMsg = 1;
+
+    while(1){
+      printf("Digite a mensagem (Digite '.' para sair): ");
+      scanf("\n");
+      fgets(mensagem, MAX_MSG, stdin);
+
+      // Realiza o envio da mensagem e aguarda a confirmacao do recebimento
+      while(confirmMsg){
+        sendMsg(mensagem, PORTA_CLIENT_C);
+        confirmMsg = getEndMsg(sd);
+      }
+      confirmMsg = 1;
+
+      if(strcmp(mensagem, ".\n") == 0)
+        exit(1);
+      else if(strcmp(mensagem, ".1\n") == 0){
+        // return;
+      }
+    }
+}
+
+void *server(){
+  char mensagem[MAX_MSG];
+  int rc, confirmMsg = 1, verificaServer = 1, sd;
+  struct sockaddr_in endServ;  /* Vai conter identificacao do servidor local */
+
+  // Inicializa o socket
+  sd=socket(AF_INET, SOCK_DGRAM, 0);
+  if(sd<0) {
+    printf("Nao pode abrir o socket \n");
+    exit(1);
+  }
+
+  // Configura o Servidor para receber as mensagens do outro cliente
+  endServ.sin_family    = AF_INET;
+  endServ.sin_addr.s_addr = inet_addr(ip); 
+  endServ.sin_port    = htons(PORTA_SERVER_S);
+
+  rc = bind (sd, (struct sockaddr *) &endServ,sizeof(endServ));
+  if(rc<0) {
+    printf("Nao pode fazer bind na porta %d \n", PORTA_SERVER_S);
+    exit(1);
+  }
+
+  printf("Conectado no IP: %s, porta SERVER: %d, porta CLIENT: %d\n", ip, PORTA_SERVER_S, PORTA_CLIENT_S);
 
   while(1) {
-    while(verificaServer)
-      verificaServer = server(sd, endCli);
-    client(sd, endCli);
-    verificaServer = 1;
-  }
-  return 0;
-}
+    char mensagem[MAX_MSG];
+    int n, tam_Cli, i, j, qtdFrames, frame;
 
-void client(int sd, struct sockaddr_in endCli){
-  char mensagem[MAX_MSG];
-  int verificaServer = 1, confirmMsg = 1;
-
-  while(1){
-    printf("Digite a mensagem (Digite '.' para sair): ");
-    scanf("\n");
-    fgets(mensagem, MAX_MSG, stdin);
-
-    // Realiza o envio da mensagem e aguarda a confirmacao do recebimento
-    while(confirmMsg){
-      sendMsg(mensagem);
-      confirmMsg = getEndMsg(sd, endCli);
+    if(cont>qtdFrames+15){
+      sendEndMsg(".erro", PORTA_CLIENT_S);
     }
-    confirmMsg = 1;
-
-    if(strcmp(mensagem, ".\n") == 0)
-      exit(1);
-    else if(strcmp(mensagem, ".1\n") == 0){
-      return;
+      
+    memset(mensagem,0x0,MAX_MSG);
+    tam_Cli = sizeof(endCli);
+    n = recvfrom(sd, mensagem, MAX_MSG, 0, (struct sockaddr *) &endCli, &tam_Cli);
+    if(n<0) {
+      printf("Nao pode receber dados \n");
+      // return 1;
     }
-  }
-}
 
-int server(int sd, struct sockaddr_in endCli){
-  char mensagem[MAX_MSG];
-  int n, tam_Cli, i, j, qtdFrames, frame;
+    qtdFrames = ((mensagem[0]-48)*10) + mensagem[1]-48;
+    frame = (((mensagem[2]-48)*10) + mensagem[3]-48);
 
-  if(cont>qtdFrames+15){
-    sendEndMsg(".erro");
-  }
-    
-  memset(mensagem,0x0,MAX_MSG);
-  tam_Cli = sizeof(endCli);
-  n = recvfrom(sd, mensagem, MAX_MSG, 0, (struct sockaddr *) &endCli, &tam_Cli);
-  if(n<0) {
-    printf("Nao pode receber dados \n");
-    return 1;
-  }
-
-  qtdFrames = ((mensagem[0]-48)*10) + mensagem[1]-48;
-  frame = (((mensagem[2]-48)*10) + mensagem[3]-48);
-
-  j=0;
-  for(i=4;i<strlen(mensagem);i++){
-    mensagemCompleta.texto[frame*BODY+j] = mensagem[i];
-    j++;
-  }
-  mensagemCompleta.verifica[frame] = 1;
-
-  for(i=0;i<qtdFrames;i++){
-    if(mensagemCompleta.verifica[i] != 1)
-      verificaMensagem = 0;
-  }
-    
-  if(verificaMensagem && mensagem[4]!='.'){
-    printf("%s: ", inet_ntoa(endCli.sin_addr));
-    for(i=0;i<qtdFrames*BODY;i++){
-      printf("%c", mensagemCompleta.texto[i]);
+    j=0;
+    for(i=4;i<strlen(mensagem);i++){
+      mensagemCompleta.texto[frame*BODY+j] = mensagem[i];
+      j++;
     }
-    for(i=0;i<98;i++){
-      mensagemCompleta.verifica[i] = 0;
-    }
-    cont = 0;
-    sendEndMsg(".ok");
-  }
-  verificaMensagem = 1;
-  cont++;
+    mensagemCompleta.verifica[frame] = 1;
 
-  if(mensagem[4]=='.' && mensagem[5]=='1'){
-    sendEndMsg(".ok");
-    return 0;
-  }
-  else{
-    if(mensagem[4]=='.'){
-      sendEndMsg(".ok");
-      exit(1);
+    for(i=0;i<qtdFrames;i++){
+      if(mensagemCompleta.verifica[i] != 1)
+        verificaMensagem = 0;
     }
-    return 1;
+      
+    if(verificaMensagem && mensagem[4]!='.'){
+      printf("\n%s: ", inet_ntoa(endCli.sin_addr));
+      for(i=0;i<qtdFrames*BODY;i++){
+        printf("%c", mensagemCompleta.texto[i]);
+      }
+      for(i=0;i<98;i++){
+        mensagemCompleta.verifica[i] = 0;
+      }
+      cont = 0;
+      sendEndMsg(".ok", PORTA_CLIENT_S);
+    }
+    verificaMensagem = 1;
+    cont++;
+
+    if(mensagem[4]=='.' && mensagem[5]=='1'){
+      sendEndMsg(".ok", PORTA_CLIENT_S);
+      // return 0;
+    }
+    else{
+      if(mensagem[4]=='.'){
+        sendEndMsg(".ok", PORTA_CLIENT_S);
+        exit(1);
+      }
+      // return 1;
+    }
   }
 }
 
 //Envia mensagem de confirmacao que recebeu todas as mensagens
-void sendEndMsg(char *msg){
+void sendEndMsg(char *msg, int portaClient){
   int sd, rc;
   struct sockaddr_in ladoCli;
   struct sockaddr_in ladoServ;  /* dados do servidor remoto */
 
   ladoServ.sin_family      = AF_INET;
   ladoServ.sin_addr.s_addr = inet_addr(ip);
-  ladoServ.sin_port      = htons(PORTA_CLIENT);
+  ladoServ.sin_port      = htons(portaClient);
 
   ladoCli.sin_family   = AF_INET;
   ladoCli.sin_addr.s_addr= htonl(INADDR_ANY);  
@@ -201,17 +244,17 @@ void sendEndMsg(char *msg){
 }
 
 // Funcao responsavel pelo envio da mensagem
-void sendMsg(char *msg) {
+void sendMsg(char *mensagem, int portaClient) {
   // Inicializa as variaveis - CLIENTE
-  char frame[SIZE_CABECALHO + SIZE_FRAME];
-  int sd, rc, i, j, lenMsg, qtdFrames, resto, temp, tempQtdFrames;
+  char frame[SIZE_CABECALHO + BODY];
+  int sd, rc, i, j, lenMensagem, qtdFrames, resto, temp, tempQtdFrames;
   struct sockaddr_in ladoCli;   /* dados do cliente local   */
   struct sockaddr_in ladoServ;  /* dados do servidor remoto */
 
   // Configura o cliente
   ladoServ.sin_family      = AF_INET;
   ladoServ.sin_addr.s_addr = inet_addr(ip);
-  ladoServ.sin_port      = htons(PORTA_CLIENT);
+  ladoServ.sin_port      = htons(portaClient);
 
   ladoCli.sin_family   = AF_INET;
   ladoCli.sin_addr.s_addr= htonl(INADDR_ANY);  
@@ -230,9 +273,9 @@ void sendMsg(char *msg) {
   }
 
   // Responsavel pela quebra da mensagem em quadros
-  lenMsg = strlen(msg);
-  qtdFrames = lenMsg / SIZE_FRAME;
-  resto = lenMsg % SIZE_FRAME;
+  lenMensagem = strlen(mensagem);
+  qtdFrames = lenMensagem / BODY;
+  resto = lenMensagem % BODY;
 
   tempQtdFrames = qtdFrames;
   if(resto>0)
@@ -264,8 +307,8 @@ void sendMsg(char *msg) {
       frame[3] = temp + '0';
     }
       
-    for(j=0;j<SIZE_FRAME;j++)
-      frame[j+4] = msg[(i*SIZE_FRAME)+j];
+    for(j=0;j<BODY;j++)
+      frame[j+4] = mensagem[(i*BODY)+j];
 
     // Envia os quadros da mensagem
     rc = sendto(sd, frame, strlen(frame), 0,(struct sockaddr *) &ladoServ, sizeof(ladoServ));
@@ -298,7 +341,7 @@ void sendMsg(char *msg) {
     }
 
     for(j=0;j<resto;j++)
-      frame[j+4] = msg[(qtdFrames*SIZE_FRAME)+j];
+      frame[j+4] = mensagem[(qtdFrames*BODY)+j];
       
     // Envia os quadros da mensagem
     rc = sendto(sd, frame, resto+4, 0,(struct sockaddr *) &ladoServ, sizeof(ladoServ));
@@ -310,7 +353,7 @@ void sendMsg(char *msg) {
   }
 }
 
-int getEndMsg(int sd, struct sockaddr_in endCli) {
+int getEndMsg(int sd) {
   char mensagem[MAX_MSG];
   int n, tam_Cli;
 
